@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { UploadCloudIcon } from './icons';
 import { Compare } from './ui/compare';
@@ -15,42 +15,99 @@ interface StartScreenProps {
   onModelFinalized: (modelUrl: string) => void;
 }
 
+const MAX_FILE_SIZE_MB = 10;
+const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
+const MIN_ASPECT_RATIO = 0.4; // Tall photo (e.g., 2:5 aspect ratio)
+const MAX_ASPECT_RATIO = 1.8; // Wide photo (e.g., 16:9 aspect ratio)
+
 const StartScreen: React.FC<StartScreenProps> = ({ onModelFinalized }) => {
   const [userImageUrl, setUserImageUrl] = useState<string | null>(null);
   const [generatedModelUrl, setGeneratedModelUrl] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const dragCounter = useRef(0);
 
   const handleFileSelect = useCallback(async (file: File) => {
-    if (!file.type.startsWith('image/')) {
-        setError('Please select an image file.');
+    setError(null);
+
+    if (!file || !file.type.startsWith('image/')) {
+        setError('Please select a valid image file (e.g., PNG, JPEG).');
         return;
     }
 
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-        const dataUrl = e.target?.result as string;
-        setUserImageUrl(dataUrl);
-        setIsGenerating(true);
-        setGeneratedModelUrl(null);
-        setError(null);
-        try {
-            const result = await generateModelImage(file);
-            setGeneratedModelUrl(result);
-        } catch (err) {
-            setError(getFriendlyErrorMessage(err, 'Failed to create model'));
-            setUserImageUrl(null);
-        } finally {
-            setIsGenerating(false);
+    if (file.size > MAX_FILE_SIZE_BYTES) {
+        setError(`File is too large. Please upload an image under ${MAX_FILE_SIZE_MB}MB.`);
+        return;
+    }
+
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+        URL.revokeObjectURL(objectUrl);
+        const aspectRatio = img.width / img.height;
+
+        if (aspectRatio < MIN_ASPECT_RATIO || aspectRatio > MAX_ASPECT_RATIO) {
+            setError('Image aspect ratio is not suitable. Please use a standard portrait or landscape photo for best results.');
+            return;
         }
+
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            const dataUrl = e.target?.result as string;
+            setUserImageUrl(dataUrl);
+            setIsGenerating(true);
+            setGeneratedModelUrl(null);
+            try {
+                const result = await generateModelImage(file);
+                setGeneratedModelUrl(result);
+            } catch (err) {
+                setError(getFriendlyErrorMessage(err, 'Failed to create model'));
+                setUserImageUrl(null);
+            } finally {
+                setIsGenerating(false);
+            }
+        };
+        reader.readAsDataURL(file);
     };
-    reader.readAsDataURL(file);
+    img.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        setError('Could not read the image file. It might be corrupted.');
+    };
+    img.src = objectUrl;
   }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       handleFileSelect(e.target.files[0]);
     }
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+  };
+  const handleDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      dragCounter.current++;
+      if (dragCounter.current === 1) {
+        setIsDraggingOver(true);
+      }
+  };
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      dragCounter.current--;
+      if (dragCounter.current === 0) {
+        setIsDraggingOver(false);
+      }
+  };
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      dragCounter.current = 0;
+      setIsDraggingOver(false);
+      const files = e.dataTransfer.files;
+      if (files && files.length > 0) {
+          handleFileSelect(files[0]);
+      }
   };
 
   const reset = () => {
@@ -78,13 +135,33 @@ const StartScreen: React.FC<StartScreenProps> = ({ onModelFinalized }) => {
           exit="exit"
           transition={{ duration: 0.4, ease: "easeInOut" }}
         >
-          <div className="lg:w-1/2 flex flex-col items-center lg:items-start text-center lg:text-left">
+          <div
+            onDragEnter={handleDragEnter}
+            onDragLeave={handleDragLeave}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
+            className={`relative lg:w-1/2 flex flex-col items-center justify-center text-center lg:text-left p-6 rounded-2xl border-2 border-dashed transition-colors duration-300 ${isDraggingOver ? 'border-gray-600 bg-gray-50' : 'border-transparent'}`}
+          >
+            <AnimatePresence>
+              {isDraggingOver && (
+                  <motion.div 
+                      initial={{ opacity: 0 }} 
+                      animate={{ opacity: 1 }} 
+                      exit={{ opacity: 0 }}
+                      className="absolute inset-0 bg-white/90 backdrop-blur-sm flex flex-col items-center justify-center z-10 rounded-xl"
+                  >
+                      <UploadCloudIcon className="w-12 h-12 text-gray-600 animate-pulse" />
+                      <p className="text-xl font-semibold text-gray-700 mt-2">Drop photo here</p>
+                  </motion.div>
+              )}
+            </AnimatePresence>
+
             <div className="max-w-lg">
               <h1 className="text-5xl md:text-6xl font-serif font-bold text-gray-900 leading-tight">
                 Create Your Model for Any Look.
               </h1>
               <p className="mt-4 text-lg text-gray-600">
-                Ever wondered how an outfit would look on you? Stop guessing. Upload a photo and see for yourself. Our AI creates your personal model, ready to try on anything.
+                Ever wondered how an outfit would look on you? Stop guessing. Drag and drop a photo, or click upload, to see for yourself. Our AI creates your personal model, ready to try on anything.
               </p>
               <hr className="my-8 border-gray-200" />
               <div className="flex flex-col items-center lg:items-start w-full gap-3">

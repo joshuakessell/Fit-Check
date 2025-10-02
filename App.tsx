@@ -3,13 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import StartScreen from './components/StartScreen';
 import Canvas from './components/Canvas';
 import WardrobePanel from './components/WardrobeModal';
 import CurrentOutfitPanel from './components/CurrentOutfitPanel';
 import ScenePanel from './components/ScenePanel';
+import PosePanel from './components/PosePanel';
 import { generateCompositeImage } from './services/geminiService';
 import { WardrobeItem } from './types';
 import { ChevronDownIcon, ChevronUpIcon } from './components/icons';
@@ -27,77 +28,59 @@ const POSE_INSTRUCTIONS = [
   "Leaning against a wall",
 ];
 
-const useMediaQuery = (query: string): boolean => {
-  const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
-
-  useEffect(() => {
-    const mediaQueryList = window.matchMedia(query);
-    const listener = (event: MediaQueryListEvent) => setMatches(event.matches);
-    mediaQueryList.addEventListener('change', listener);
-    if (mediaQueryList.matches !== matches) {
-      setMatches(mediaQueryList.matches);
-    }
-    return () => {
-      mediaQueryList.removeEventListener('change', listener);
-    };
-  }, [query, matches]);
-
-  return matches;
-};
-
+interface PendingChanges {
+  top: WardrobeItem | null;
+  bottom: WardrobeItem | null;
+  expression: string;
+  background: string;
+  poseIndex: number;
+}
 
 const App: React.FC = () => {
   const [baseModelUrl, setBaseModelUrl] = useState<string | null>(null);
   const [displayImageUrl, setDisplayImageUrl] = useState<string | null>(null);
+  
+  // State for the currently displayed image
   const [wornTop, setWornTop] = useState<WardrobeItem | null>(null);
   const [wornBottom, setWornBottom] = useState<WardrobeItem | null>(null);
   const [currentExpression, setCurrentExpression] = useState('Default');
   const [currentBackground, setCurrentBackground] = useState('Original Studio');
   const [currentPoseIndex, setCurrentPoseIndex] = useState(0);
+
+  // State for user selections before applying
+  const [pendingChanges, setPendingChanges] = useState<PendingChanges | null>(null);
+
   const [isLoading, setIsLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [wardrobe, setWardrobe] = useState<WardrobeItem[]>(defaultWardrobe);
   const [isSheetCollapsed, setIsSheetCollapsed] = useState(false);
-  const isMobile = useMediaQuery('(max-width: 767px)');
 
-  const updateOutfit = useCallback(async (
-    config: {
-      top?: WardrobeItem | null,
-      bottom?: WardrobeItem | null,
-      expression?: string,
-      background?: string,
-      poseIndex?: number
-    }
-  ) => {
-    if (!baseModelUrl) return;
-
-    const newTop = config.top !== undefined ? config.top : wornTop;
-    const newBottom = config.bottom !== undefined ? config.bottom : wornBottom;
-    const newExpression = config.expression !== undefined ? config.expression : currentExpression;
-    const newBackground = config.background !== undefined ? config.background : currentBackground;
-    const newPoseIndex = config.poseIndex !== undefined ? config.poseIndex : currentPoseIndex;
+  const handleApplyChanges = useCallback(async () => {
+    if (!baseModelUrl || !pendingChanges) return;
 
     setError(null);
     setIsLoading(true);
-    setLoadingMessage('Updating your look...');
+    setLoadingMessage('Applying your changes...');
 
     try {
+      const { top, bottom, expression, background, poseIndex } = pendingChanges;
       const newImageUrl = await generateCompositeImage(
         baseModelUrl,
-        POSE_INSTRUCTIONS[newPoseIndex],
-        newTop ?? undefined,
-        newBottom ?? undefined,
-        newExpression,
-        newBackground
+        POSE_INSTRUCTIONS[poseIndex],
+        top ?? undefined,
+        bottom ?? undefined,
+        expression,
+        background
       );
       setDisplayImageUrl(newImageUrl);
-      // Update state after successful generation
-      setWornTop(newTop);
-      setWornBottom(newBottom);
-      setCurrentExpression(newExpression);
-      setCurrentBackground(newBackground);
-      setCurrentPoseIndex(newPoseIndex);
+      
+      // Sync current state with pending changes after successful generation
+      setWornTop(top);
+      setWornBottom(bottom);
+      setCurrentExpression(expression);
+      setCurrentBackground(background);
+      setCurrentPoseIndex(poseIndex);
 
     } catch (err) {
       setError(getFriendlyErrorMessage(err, 'Failed to update the image'));
@@ -105,11 +88,24 @@ const App: React.FC = () => {
       setIsLoading(false);
       setLoadingMessage('');
     }
-  }, [baseModelUrl, wornTop, wornBottom, currentExpression, currentBackground, currentPoseIndex]);
+  }, [baseModelUrl, pendingChanges]);
   
   const handleModelFinalized = (url: string) => {
     setBaseModelUrl(url);
     setDisplayImageUrl(url);
+    const initialState = {
+      top: null,
+      bottom: null,
+      expression: 'Default',
+      background: 'Original Studio',
+      poseIndex: 0,
+    };
+    setWornTop(initialState.top);
+    setWornBottom(initialState.bottom);
+    setCurrentExpression(initialState.expression);
+    setCurrentBackground(initialState.background);
+    setCurrentPoseIndex(initialState.poseIndex);
+    setPendingChanges(initialState);
   };
 
   const handleStartOver = () => {
@@ -120,11 +116,16 @@ const App: React.FC = () => {
     setCurrentExpression('Default');
     setCurrentBackground('Original Studio');
     setCurrentPoseIndex(0);
+    setPendingChanges(null);
     setIsLoading(false);
     setLoadingMessage('');
     setError(null);
     setWardrobe(defaultWardrobe);
     setIsSheetCollapsed(false);
+  };
+
+  const handlePendingChange = (updates: Partial<PendingChanges>) => {
+    setPendingChanges(prev => prev ? { ...prev, ...updates } : null);
   };
 
   const handleGarmentCategorized = (item: WardrobeItem) => {
@@ -134,46 +135,43 @@ const App: React.FC = () => {
     });
   };
 
-  const handleGarmentSelect = useCallback(async (_garmentFile: File, garmentInfo: WardrobeItem) => {
+  const handleGarmentSelect = useCallback((_garmentFile: File, garmentInfo: WardrobeItem) => {
     if (garmentInfo.category === 'top') {
-        await updateOutfit({ top: garmentInfo });
+      handlePendingChange({ top: garmentInfo });
     } else {
-        await updateOutfit({ bottom: garmentInfo });
+      handlePendingChange({ bottom: garmentInfo });
     }
-  }, [updateOutfit]);
+  }, []);
 
-  const handleRemoveGarment = useCallback(async (category: 'top' | 'bottom') => {
+  const handleRemoveGarment = useCallback((category: 'top' | 'bottom') => {
     if (category === 'top') {
-        await updateOutfit({ top: null });
+      handlePendingChange({ top: null });
     } else {
-        await updateOutfit({ bottom: null });
+      handlePendingChange({ bottom: null });
     }
-  }, [updateOutfit]);
+  }, []);
 
-  const handleColorChange = useCallback(async (category: 'top' | 'bottom', color: string) => {
+  const handleColorChange = useCallback((category: 'top' | 'bottom', color: string) => {
+    if (!pendingChanges) return;
     const isReverting = color === 'original';
-    if (category === 'top' && wornTop) {
-        const updatedTop = { ...wornTop, activeColor: isReverting ? undefined : color };
-        await updateOutfit({ top: updatedTop });
-    } else if (category === 'bottom' && wornBottom) {
-        const updatedBottom = { ...wornBottom, activeColor: isReverting ? undefined : color };
-        await updateOutfit({ bottom: updatedBottom });
+    if (category === 'top' && pendingChanges.top) {
+        const updatedTop = { ...pendingChanges.top, activeColor: isReverting ? undefined : color };
+        handlePendingChange({ top: updatedTop });
+    } else if (category === 'bottom' && pendingChanges.bottom) {
+        const updatedBottom = { ...pendingChanges.bottom, activeColor: isReverting ? undefined : color };
+        handlePendingChange({ bottom: updatedBottom });
     }
-  }, [wornTop, wornBottom, updateOutfit]);
+  }, [pendingChanges]);
 
-  const handleExpressionChange = (expression: string) => {
-    if (expression === currentExpression || isLoading) return;
-    updateOutfit({ expression });
-  };
-  const handleBackgroundChange = (background: string) => {
-    if (background === currentBackground || isLoading) return;
-    updateOutfit({ background });
-  };
-  
-  const handlePoseSelect = (newIndex: number) => {
-    if (isLoading || newIndex === currentPoseIndex) return;
-    updateOutfit({ poseIndex: newIndex });
-  };
+  const hasPendingChanges = useMemo(() => {
+    if (!pendingChanges) return false;
+    const topChanged = pendingChanges.top?.id !== wornTop?.id || pendingChanges.top?.activeColor !== wornTop?.activeColor;
+    const bottomChanged = pendingChanges.bottom?.id !== wornBottom?.id || pendingChanges.bottom?.activeColor !== wornBottom?.activeColor;
+    const expressionChanged = pendingChanges.expression !== currentExpression;
+    const backgroundChanged = pendingChanges.background !== currentBackground;
+    const poseChanged = pendingChanges.poseIndex !== currentPoseIndex;
+    return topChanged || bottomChanged || expressionChanged || backgroundChanged || poseChanged;
+  }, [pendingChanges, wornTop, wornBottom, currentExpression, currentBackground, currentPoseIndex]);
 
   const viewVariants = {
     initial: { opacity: 0, y: 15 },
@@ -213,10 +211,6 @@ const App: React.FC = () => {
                   onStartOver={handleStartOver}
                   isLoading={isLoading}
                   loadingMessage={loadingMessage}
-                  onSelectPose={handlePoseSelect}
-                  poseInstructions={POSE_INSTRUCTIONS}
-                  currentPoseIndex={currentPoseIndex}
-                  availablePoseKeys={[]} // Pose caching removed
                 />
               </div>
 
@@ -231,7 +225,7 @@ const App: React.FC = () => {
                   >
                     {isSheetCollapsed ? <ChevronUpIcon className="w-6 h-6 text-gray-500" /> : <ChevronDownIcon className="w-6 h-6 text-gray-500" />}
                   </button>
-                  <div className="p-4 md:p-6 pb-20 overflow-y-auto flex-grow flex flex-col gap-8">
+                  <div className="p-4 md:p-6 pb-32 overflow-y-auto flex-grow flex flex-col gap-8">
                     {error && (
                       <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-4 rounded-md" role="alert">
                         <p className="font-bold">Error</p>
@@ -239,45 +233,56 @@ const App: React.FC = () => {
                       </div>
                     )}
                     <CurrentOutfitPanel 
-                      wornTop={wornTop}
-                      wornBottom={wornBottom}
+                      wornTop={pendingChanges?.top ?? null}
+                      wornBottom={pendingChanges?.bottom ?? null}
                       onRemoveGarment={handleRemoveGarment}
                       onColorChange={handleColorChange}
                       isLoading={isLoading}
                     />
                     <ScenePanel 
-                      onExpressionChange={handleExpressionChange}
-                      onBackgroundChange={handleBackgroundChange}
-                      currentExpression={currentExpression}
-                      currentBackground={currentBackground}
+                      onExpressionChange={(exp) => handlePendingChange({ expression: exp })}
+                      onBackgroundChange={(bg) => handlePendingChange({ background: bg })}
+                      currentExpression={pendingChanges?.expression ?? 'Default'}
+                      currentBackground={pendingChanges?.background ?? 'Original Studio'}
+                      isLoading={isLoading}
+                    />
+                    <PosePanel
+                      onPoseSelect={(index) => handlePendingChange({ poseIndex: index })}
+                      currentPoseIndex={pendingChanges?.poseIndex ?? 0}
+                      poseInstructions={POSE_INSTRUCTIONS}
                       isLoading={isLoading}
                     />
                     <WardrobePanel
                       onGarmentSelect={handleGarmentSelect}
-                      wornTopId={wornTop?.id}
-                      wornBottomId={wornBottom?.id}
+                      wornTopId={pendingChanges?.top?.id}
+                      wornBottomId={pendingChanges?.bottom?.id}
                       isLoading={isLoading}
                       wardrobe={wardrobe}
                       onGarmentCategorized={handleGarmentCategorized}
                     />
                   </div>
+
+                  <AnimatePresence>
+                  {hasPendingChanges && !isLoading && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 20 }}
+                      transition={{ duration: 0.3, ease: 'easeInOut' }}
+                      className="absolute bottom-0 left-0 right-0 p-4 bg-white/50 backdrop-blur-md border-t border-gray-200/60"
+                    >
+                      <button
+                        onClick={handleApplyChanges}
+                        disabled={isLoading}
+                        className="w-full px-8 py-3 text-base font-semibold text-white bg-gray-900 rounded-md cursor-pointer group hover:bg-gray-700 transition-colors disabled:bg-gray-400"
+                      >
+                        Generate Image
+                      </button>
+                    </motion.div>
+                  )}
+                  </AnimatePresence>
               </aside>
             </main>
-            <AnimatePresence>
-              {isLoading && isMobile && (
-                <motion.div
-                  className="fixed inset-0 bg-white/80 backdrop-blur-md flex flex-col items-center justify-center z-50"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                >
-                  <Spinner />
-                  {loadingMessage && (
-                    <p className="text-lg font-serif text-gray-700 mt-4 text-center px-4">{loadingMessage}</p>
-                  )}
-                </motion.div>
-              )}
-            </AnimatePresence>
           </motion.div>
         )}
       </AnimatePresence>

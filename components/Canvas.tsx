@@ -2,8 +2,8 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
 */
-import React, { useState } from 'react';
-import { RotateCcwIcon, ChevronLeftIcon, ChevronRightIcon } from './icons';
+import React from 'react';
+import { RotateCcwIcon } from './icons';
 import Spinner from './Spinner';
 import { AnimatePresence, motion } from 'framer-motion';
 
@@ -12,27 +12,9 @@ interface CanvasProps {
   onStartOver: () => void;
   isLoading: boolean;
   loadingMessage: string;
-  onSelectPose: (index: number) => void;
-  poseInstructions: string[];
-  currentPoseIndex: number;
-  availablePoseKeys: string[]; // This is no longer used for logic but kept for prop compatibility
 }
 
-const Canvas: React.FC<CanvasProps> = ({ displayImageUrl, onStartOver, isLoading, loadingMessage, onSelectPose, poseInstructions, currentPoseIndex }) => {
-  const [isPoseMenuOpen, setIsPoseMenuOpen] = useState(false);
-  
-  const handlePreviousPose = () => {
-    if (isLoading) return;
-    const newIndex = (currentPoseIndex - 1 + poseInstructions.length) % poseInstructions.length;
-    onSelectPose(newIndex);
-  };
-
-  const handleNextPose = () => {
-    if (isLoading) return;
-    const newIndex = (currentPoseIndex + 1) % poseInstructions.length;
-    onSelectPose(newIndex);
-  };
-  
+const Canvas: React.FC<CanvasProps> = ({ displayImageUrl, onStartOver, isLoading, loadingMessage }) => {
   return (
     <div className="w-full h-full flex items-center justify-center p-4 relative animate-zoom-in group">
       {/* Start Over Button */}
@@ -76,63 +58,6 @@ const Canvas: React.FC<CanvasProps> = ({ displayImageUrl, onStartOver, isLoading
           )}
         </AnimatePresence>
       </div>
-
-      {/* Pose Controls */}
-      {displayImageUrl && !isLoading && (
-        <div 
-          className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 opacity-0 group-hover:opacity-100 transition-opacity duration-300"
-          onMouseEnter={() => setIsPoseMenuOpen(true)}
-          onMouseLeave={() => setIsPoseMenuOpen(false)}
-        >
-          {/* Pose popover menu */}
-          <AnimatePresence>
-              {isPoseMenuOpen && (
-                  <motion.div
-                      initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                      transition={{ duration: 0.2, ease: "easeOut" }}
-                      className="absolute bottom-full mb-3 w-64 bg-white/80 backdrop-blur-lg rounded-xl p-2 border border-gray-200/80"
-                  >
-                      <div className="grid grid-cols-2 gap-2">
-                          {poseInstructions.map((pose, index) => (
-                              <button
-                                  key={pose}
-                                  onClick={() => onSelectPose(index)}
-                                  disabled={isLoading || index === currentPoseIndex}
-                                  className="w-full text-left text-sm font-medium text-gray-800 p-2 rounded-md hover:bg-gray-200/70 disabled:opacity-50 disabled:bg-gray-200/70 disabled:font-bold disabled:cursor-not-allowed"
-                              >
-                                  {pose}
-                              </button>
-                          ))}
-                      </div>
-                  </motion.div>
-              )}
-          </AnimatePresence>
-          
-          <div className="flex items-center justify-center gap-2 bg-white/60 backdrop-blur-md rounded-full p-2 border border-gray-300/50">
-            <button 
-              onClick={handlePreviousPose}
-              aria-label="Previous pose"
-              className="p-2 rounded-full hover:bg-white/80 active:scale-90 transition-all disabled:opacity-50"
-              disabled={isLoading}
-            >
-              <ChevronLeftIcon className="w-5 h-5 text-gray-800" />
-            </button>
-            <span className="text-sm font-semibold text-gray-800 w-48 text-center truncate" title={poseInstructions[currentPoseIndex]}>
-              {poseInstructions[currentPoseIndex]}
-            </span>
-            <button 
-              onClick={handleNextPose}
-              aria-label="Next pose"
-              className="p-2 rounded-full hover:bg-white/80 active:scale-90 transition-all disabled:opacity-50"
-              disabled={isLoading}
-            >
-              <ChevronRightIcon className="w-5 h-5 text-gray-800" />
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
